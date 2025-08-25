@@ -13,8 +13,35 @@ from functools import partial
 from collections import defaultdict
 from PIL import Image
 
-from modules import shared  # pylint: disable=import-error
-from modules.deepbooru import re_special  # pylint: disable=import-error
+try:
+    from modules import shared  # pylint: disable=import-error
+    HAS_SD = True
+except ImportError:
+    HAS_SD = False
+    # Create a mock shared object for standalone mode
+    class MockShared:
+        def __init__(self):
+            self.opts = type('Opts', (), {
+                'tagger_out_filename_fmt': '[name].[output_extension]',
+                'tagger_count_threshold': 100.0,
+                'tagger_batch_recursive': True,
+                'tagger_auto_serde_json': True,
+                'tagger_store_images': False,
+                'tagger_weighted_tags_files': False,
+                'tagger_verbose': False,
+                'tagger_repl_us': False,
+            })()
+    
+    shared = MockShared()
+
+try:
+    from modules.deepbooru import re_special  # pylint: disable=import-error
+    HAS_DEEPBOORU = True
+except ImportError:
+    HAS_DEEPBOORU = False
+    # Create a replacement for re_special
+    re_special = re_comp(r'([\\()])')
+
 from tagger import format as tags_format  # pylint: disable=import-error
 from tagger import settings  # pylint: disable=import-error
 
@@ -35,6 +62,82 @@ ItRetTP = Tuple[
     str,               # error message
 ]
 
+
+class QData:
+    """ data class for query data """
+    keep = ""
+    exclude = ""
+    add = ""
+    search = ""
+    replace = ""
+    err: Set[str] = set()
+    cumulative = False
+    unload_after = False
+    large_query = False
+
+    @classmethod
+    def clear(cls, i=None) -> None:
+        """ clear all query data """
+        if i is None or i == 0:
+            cls.keep = ""
+        if i is None or i == 1:
+            cls.exclude = ""
+        if i is None or i == 2:
+            cls.add = ""
+        if i is None or i == 3:
+            cls.search = ""
+        if i is None or i == 4:
+            cls.replace = ""
+        if i is None:
+            cls.err = set()
+            cls.cumulative = False
+            cls.unload_after = False
+            cls.large_query = False
+
+    @classmethod
+    def update(cls, key: str, val: str) -> None:
+        """ update query data """
+        if key == 'cumulative':
+            cls.cumulative = val
+        elif key == 'unload_after':
+            cls.unload_after = val
+        elif key == 'large_query':
+            cls.large_query = val
+        else:
+            setattr(cls, key, val)
+
+    @classmethod
+    def get_errors(cls) -> str:
+        """ get error message """
+        if len(cls.err) > 0:
+            return "Fix the following errors:<ul><li>" + \
+                '</li><li>'.join(cls.err) + "</li></ul>"
+        return ""
+
+    @classmethod
+    def update_keep(cls, val: str) -> None:
+        """ update keep tags """
+        cls.keep = val
+
+    @classmethod
+    def update_exclude(cls, val: str) -> None:
+        """ update exclude tags """
+        cls.exclude = val
+
+    @classmethod
+    def update_add(cls, val: str) -> None:
+        """ update add tags """
+        cls.add = val
+
+    @classmethod
+    def update_search(cls, val: str) -> None:
+        """ update search tags """
+        cls.search = val
+
+    @classmethod
+    def update_replace(cls, val: str) -> None:
+        """ update replace tags """
+        cls.replace = val
 
 class IOData:
     """ data class for input and output paths """

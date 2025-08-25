@@ -1,14 +1,27 @@
-deepdanbooru
-jsonschema
-fastapi
-gradio
-huggingface_hub
-numpy
-opencv_contrib_python
-opencv_python
-opencv_python_headless
-packaging
-pandas
-Pillow
-tensorflow
-tqdm
+# Core dependencies for standalone operation
+fastapi>=0.68.0
+uvicorn>=0.15.0
+Pillow>=8.3.0
+numpy>=1.21.0
+pandas>=1.3.0
+tqdm>=4.62.0
+jsonschema>=3.2.0
+gradio>=3.35.0
+
+# Optional dependencies for different model types
+# For ONNX models
+onnxruntime>=1.8.0
+
+# For DeepDanbooru models
+# git+https://github.com/KichangKim/DeepDanbooru.git
+
+# For HuggingFace models
+huggingface-hub>=0.0.12
+
+# For image processing
+opencv-contrib-python>=4.5.0
+opencv-python>=4.5.0
+opencv-python-headless>=4.5.0
+
+# For packaging
+packaging>=21.0

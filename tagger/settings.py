@@ -1,7 +1,45 @@
 """Settings tab entries for the tagger module"""
 import os
 from typing import List
-from modules import shared  # pylint: disable=import-error
+
+try:
+    from modules import shared  # pylint: disable=import-error
+    HAS_SD = True
+except ImportError:
+    HAS_SD = False
+    # Create a mock shared object for standalone mode
+    class MockOpts:
+        def __init__(self):
+            self.options = {}
+            
+        def add_option(self, key, info):
+            self.options[key] = info
+            
+        def onchange(self, key, func):
+            pass
+            
+        def get(self, key, default=None):
+            opt = self.options.get(key)
+            if opt and hasattr(opt, 'default'):
+                return opt.default
+            return default
+    
+    class MockOptionInfo:
+        def __init__(self, default, label, section=None, component=None, component_args=None):
+            self.default = default
+            self.label = label
+            self.section = section
+            self.component = component
+            self.component_args = component_args
+    
+    class MockShared:
+        def __init__(self):
+            self.opts = MockOpts()
+            self.models_path = os.path.join(os.getcwd(), "models")
+    
+    shared = MockShared()
+    shared.OptionInfo = MockOptionInfo
+
 import gradio as gr
 
 # kaomoji from WD 1.4 tagger csv. thanks, Meow-San#5400!
@@ -15,6 +53,49 @@ HF_CACHE = os.environ.get('HF_HOME', os.environ.get('HUGGINGFACE_HUB_CACHE',
 def slider_wrapper(value, elem_id, **kwargs):
     # required or else gradio will throw errors
     return gr.Slider(**kwargs)
+
+
+class InterrogatorSettings:
+    """ Interrogator settings """
+    @staticmethod
+    def set_output_filename_format():
+        """ Set output filename format """
+        pass
+
+    @staticmethod
+    def format():
+        """ Format settings """
+        pass
+
+    @staticmethod
+    def threshold():
+        """ Threshold settings """
+        pass
+
+    @staticmethod
+    def save_tags():
+        """ Save tags settings """
+        pass
+
+    @staticmethod
+    def batch():
+        """ Batch settings """
+        pass
+
+    @staticmethod
+    def tag_counts():
+        """ Tag counts settings """
+        pass
+
+    @staticmethod
+    def unload():
+        """ Unload settings """
+        pass
+
+    @staticmethod
+    def split_escape(input_str: str, separator: str = ",") -> List[str]:
+        """ Split and escape """
+        return [x.strip() for x in input_str.split(separator) if x] if input_str else []
 
 
 def on_ui_settings():
@@ -88,70 +169,16 @@ def on_ui_settings():
     shared.opts.add_option(
         key='tagger_repl_us',
         info=shared.OptionInfo(
-            True,
-            label='Use spaces instead of underscore',
+            False,
+            label='Replace underscores with spaces in tags',
             section=section,
         ),
-    )
-    shared.opts.add_option(
-        key='tagger_repl_us_excl',
-        info=shared.OptionInfo(
-            DEFAULT_KAMOJIS,
-            label='Underscore replacement excludes (split by comma)',
-            section=section,
-        ),
-    )
-    shared.opts.onchange(
-        key='tagger_repl_us_excl',
-        func=Its.set_us_excl
     )
     shared.opts.add_option(
         key='tagger_escape',
         info=shared.OptionInfo(
             False,
-            label='Escape brackets',
+            label='Escape brackets in tags',
             section=section,
         ),
     )
-    shared.opts.add_option(
-        key='tagger_batch_size',
-        info=shared.OptionInfo(
-            1024,
-            label='batch size for large queries',
-            section=section,
-        ),
-    )
-    # see huggingface_hub guides/manage-cache
-    shared.opts.add_option(
-        key='tagger_hf_cache_dir',
-        info=shared.OptionInfo(
-            HF_CACHE,
-            label='HuggingFace cache directory, '
-            'see huggingface_hub guides/manage-cache',
-            section=section,
-        ),
-    )
-
-
-def split_str(string: str, separator=',') -> List[str]:
-    return [x.strip() for x in string.split(separator) if x]
-
-
-class InterrogatorSettings:
-    kamojis = set(split_str(DEFAULT_KAMOJIS))
-    output_filename_format = DEFAULT_OFF
-    hf_cache = HF_CACHE
-
-    @classmethod
-    def set_us_excl(cls):
-        ruxs = getattr(shared.opts, 'tagger_repl_us_excl', DEFAULT_KAMOJIS)
-        cls.kamojis = set(split_str(ruxs))
-
-    @classmethod
-    def set_output_filename_format(cls):
-        fnfmt = getattr(shared.opts, 'tagger_out_filename_fmt', DEFAULT_OFF)
-        if fnfmt[-12:] == '.[extension]':
-            print("refused to write an image extension")
-            fnfmt = fnfmt[:-12] + '.[output_extension]'
-
-        cls.output_filename_format = fnfmt.strip()

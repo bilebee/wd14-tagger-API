@@ -4,17 +4,27 @@ import os
 from typing import List, Dict
 from pathlib import Path
 
-from modules import shared, scripts  # pylint: disable=import-error
-from modules.shared import models_path  # pylint: disable=import-error
+try:
+    from modules import shared, scripts  # pylint: disable=import-error
+    from modules.shared import models_path  # pylint: disable=import-error
+    HAS_SD = True
+except ImportError:
+    # Standalone mode settings
+    shared = type('Shared', (), {})()
+    models_path = os.path.join(os.getcwd(), "models")
+    shared.models_path = models_path
+    shared.cmd_opts = type('CmdOpts', (), {})()
+    scripts = None
+    HAS_SD = False
 
-default_ddp_path = Path(models_path, 'deepdanbooru')
-default_onnx_path = Path(models_path, 'TaggerOnnx')
+default_ddp_path = Path(shared.models_path, 'deepdanbooru')
+default_onnx_path = Path(shared.models_path, 'TaggerOnnx')
+
 from tagger.preset import Preset  # pylint: disable=import-error
 from tagger.interrogator import Interrogator, DeepDanbooruInterrogator, \
-                                MLDanbooruInterrogator  # pylint: disable=E0401 # noqa: E501
-from tagger.interrogator import WaifuDiffusionInterrogator  # pylint: disable=E0401 # noqa: E501
+                                WaifuDiffusionInterrogator  # pylint: disable=E0401 # noqa: E501
 
-preset = Preset(Path(scripts.basedir(), 'presets'))
+preset = Preset(Path(scripts.basedir(), 'presets')) if HAS_SD and scripts else Preset(Path('presets'))
 
 interrogators: Dict[str, Interrogator] = {
     'wd14-vit.v1': WaifuDiffusionInterrogator(
@@ -47,28 +57,18 @@ interrogators: Dict[str, Interrogator] = {
         'WD14 moat tagger v2',
         repo_id='SmilingWolf/wd-v1-4-moat-tagger-v2'
     ),
-    'mld-caformer.dec-5-97527': MLDanbooruInterrogator(
-        'ML-Danbooru Caformer dec-5-97527',
-        repo_id='deepghs/ml-danbooru-onnx',
-        model_path='ml_caformer_m36_dec-5-97527.onnx'
-    ),
-    'mld-tresnetd.6-30000': MLDanbooruInterrogator(
-        'ML-Danbooru TResNet-D 6-30000',
-        repo_id='deepghs/ml-danbooru-onnx',
-        model_path='TResnet-D-FLq_ema_6-30000.onnx'
-    ),
 }
 
 
 def refresh_interrogators() -> List[str]:
     """Refreshes the interrogators list"""
     # load deepdanbooru project
-    ddp_path = shared.cmd_opts.deepdanbooru_projects_path
+    ddp_path = shared.cmd_opts.deepdanbooru_projects_path if HAS_SD and shared and shared.cmd_opts else None
     if ddp_path is None:
-        ddp_path = default_ddp_path
-    onnx_path = shared.cmd_opts.onnxtagger_path
+        ddp_path = os.environ.get('DEEPDANBOORU_PROJECTS_PATH', default_ddp_path)
+    onnx_path = shared.cmd_opts.onnxtagger_path if HAS_SD and shared and shared.cmd_opts else None
     if onnx_path is None:
-        onnx_path = default_onnx_path
+        onnx_path = os.environ.get('ONNXTAGGER_PATH', default_onnx_path)
     os.makedirs(ddp_path, exist_ok=True)
     os.makedirs(onnx_path, exist_ok=True)
 
@@ -90,11 +90,14 @@ def refresh_interrogators() -> List[str]:
             print(f"Warning: {path} is not a directory, skipped")
             continue
 
+        # Check for ONNX model files
         onnx_files = [x for x in os.scandir(path) if x.name.endswith('.onnx')]
+        
         if len(onnx_files) != 1:
             print(f"Warning: {path} requires exactly one .onnx model, skipped")
             continue
-        local_path = Path(path, onnx_files[0].name)
+            
+        local_model_path = Path(path, onnx_files[0].name)
 
         csv = [x for x in os.scandir(path) if x.name.endswith('.csv')]
         if len(csv) == 0:
@@ -102,27 +105,22 @@ def refresh_interrogators() -> List[str]:
             continue
 
         def tag_select_csvs_up_front(k):
-            sum(-1 if t in k.name.lower() else 1 for t in ["tag", "select"])
+            return sum(-1 if t in k.name.lower() else 1 for t in ["tag", "select"])
 
         csv.sort(key=tag_select_csvs_up_front)
         tags_path = Path(path, csv[0])
 
         if path.name not in interrogators:
-            if path.name == 'wd-v1-4-convnextv2-tagger-v2':
-                interrogators[path.name] = WaifuDiffusionInterrogator(
-                    path.name,
-                    repo_id='SmilingWolf/SW-CV-ModelZoo',
-                    is_hf=False
-                )
-            elif path.name == 'Z3D-E621-Convnext':
-                interrogators[path.name] = WaifuDiffusionInterrogator(
-                    'Z3D-E621-Convnext', is_hf=False)
-            else:
-                raise NotImplementedError(f"Add {path.name} resolution similar"
-                                          "to above here")
+            # Create new interrogator for local ONNX model
+            interrogators[path.name] = WaifuDiffusionInterrogator(
+                path.name,
+                model_path=onnx_files[0].name,
+                is_hf=False
+            )
 
-        interrogators[path.name].local_model = str(local_path)
+        interrogators[path.name].local_model = str(local_model_path)
         interrogators[path.name].local_tags = str(tags_path)
+        interrogators[path.name].model_type = "onnx"  # Store model type
 
     return sorted(interrogators.keys())
 
