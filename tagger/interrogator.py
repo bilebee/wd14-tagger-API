@@ -74,6 +74,33 @@ def get_onnxrt():
     """Get ONNX runtime module with error handling for standalone mode"""
     try:
         import onnxruntime as ort
+        
+        # Check if CUDA is available and onnxruntime-gpu is installed
+        # If CUDA is available but only onnxruntime (CPU version) is installed,
+        # try to install onnxruntime-gpu
+        try:
+            # Check if CUDA provider is available
+            available_providers = ort.get_available_providers()
+            if 'CUDAExecutionProvider' not in available_providers:
+                # CUDA provider not available, check if CUDA is available on system
+                import subprocess
+                try:
+                    result = subprocess.run(['nvidia-smi'], 
+                                          capture_output=True, text=True, timeout=10)
+                    if result.returncode == 0:
+                        # NVIDIA GPU is available but CUDAExecutionProvider is not in providers
+                        # This means onnxruntime-gpu is not installed
+                        print("CUDA is available but onnxruntime-gpu is not installed.")
+                        print("For better performance, please install onnxruntime-gpu:")
+                        print("pip install onnxruntime-gpu")
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    # nvidia-smi not found or timeout, skip CUDA check
+                    pass
+            onnxruntime.preload_dlls()
+            return ort
+        except Exception:
+            pass
+            
         return ort
     except ImportError:
         raise ImportError(
@@ -222,6 +249,7 @@ class DeepDanbooruInterrogator(Interrogator):
             )
 
             print(f'Loaded {self.name} model from {str(self.project_path)}')
+            
 
             self.tags = ddp.load_tags_from_project(
                 project_path=self.project_path

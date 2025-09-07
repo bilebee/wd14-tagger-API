@@ -4,7 +4,7 @@ title WD14 Tagger Server
 echo Starting WD14 Tagger Server...
 echo.
 
-python standalone.py --port 8080
+python standalone.py --port 8080 --host 0.0.0.0
 if %errorlevel% neq 0 (
     echo.
     echo Error occurred while starting the server!
