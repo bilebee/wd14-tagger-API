@@ -100,25 +100,20 @@ async def root():
             <ol>
                 <li>Create a directory structure as shown below</li>
                 <li>Place your model files in the appropriate directories</li>
-                <li>Restart the server to detect new models</li>
             </ol>
-            
-            <h3>Directory Structure:</h3>
-            <pre>models/
-├── deepdanbooru/
-│   └── [model_name]/
-│       ├── project.json
-│       └── [other model files]
-└── TaggerOnnx/
-    └── [model_name]/
-        ├── [model_name].onnx
-        └── selected_tags.csv</pre>
-            
-            <h3>Supported Model Types:</h3>
-            <ul>
-                <li><strong>DeepDanbooru Models</strong> - Place in <code>models/deepdanbooru/[model_name]/</code></li>
-                <li><strong>ONNX Models</strong> - Place in <code>models/TaggerOnnx/[model_name]/</code></li>
-            </ul>
+            <pre>
+project/
+├── wd-v1-4-moat-tagger.v2/
+│   ├── selected_tags.csv
+│   └── wd-v1-4-moat-tagger.v2.onnx
+├── wd-v1-4-convnext-tagger.v2/
+│   ├── selected_tags.csv
+│   └── wd-v1-4-convnext-tagger.v2.onnx
+└── deepdanbooru/
+    ├── sdd-tagger/
+    └── [other DeepDanbooru projects]
+            </pre>
+            <p>Models will be automatically detected and made available through the API.</p>
         </div>
         
         <div class="model-info">
@@ -464,9 +459,12 @@ def refresh_models():
         print(f"Error loading models: {e}")
 
 def main():
+    # Check if running as compiled executable
+    is_compiled = hasattr(sys, 'frozen') or '__compiled__' in globals()
+    
     parser = argparse.ArgumentParser(description="WD14 Tagger Standalone API")
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to run the API on")
-    parser.add_argument("--port", type=int, default=8000, help="Port to run the API on")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the API on")
+    parser.add_argument("--port", type=int, default=8080, help="Port to run the API on")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
     parser.add_argument("--deepdanbooru-path", type=str, help="Path to DeepDanbooru models")
     parser.add_argument("--onnxtagger-path", type=str, help="Path to ONNX models")
@@ -498,7 +496,7 @@ def main():
     print("  POST /tagger/v1/unload-interrogators - Unload models from memory")
     
     uvicorn.run(
-        "standalone:app",
+        "standalone:app" if not is_compiled else app,
         host=args.host,
         port=args.port,
         reload=args.reload,

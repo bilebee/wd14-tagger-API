@@ -32,11 +32,37 @@ class TaggerInterrogateRequest(BaseModel):
     )
 
 
+class TaggerInterrogateBatchRequest(BaseModel):
+    """Batch interrogate request model"""
+    images: List[str] = Field(
+        title='Images',
+        description='List of base64 encoded images.',
+    )
+    model: str = Field(
+        title='Model',
+        description='The interrogate model used.',
+    )
+    threshold: float = Field(
+        title='Threshold',
+        description='The threshold used for the interrogate model.',
+        default=0.0,
+    )
+
+
 class TaggerInterrogateResponse(BaseModel):
     """Interrogate response model"""
     caption: Dict[str, Dict[str, float]] = Field(
         title='Caption',
         description='The generated captions for the image.'
+    )
+
+
+class TaggerInterrogateBatchResponse(BaseModel):
+    """Batch interrogate response model with categorized tags"""
+    captions: List[Dict[str, Dict[str, float]]] = Field(
+        title='Captions',
+        description='The generated captions for each image in the batch, '
+                    'categorized into ratings, characters, and regular tags.'
     )
 
 

@@ -1,5 +1,5 @@
 """API module for FastAPI"""
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, List
 from threading import Lock
 from secrets import compare_digest
 import asyncio
@@ -83,6 +83,13 @@ class Api:
         )
 
         self.add_api_route(
+            'interrogate-batch',
+            self.endpoint_interrogate_batch,
+            methods=['POST'],
+            response_model=models.TaggerInterrogateBatchResponse
+        )
+
+        self.add_api_route(
             'interrogate-categorized',
             self.endpoint_interrogate_categorized,
             methods=['POST'],
@@ -111,23 +118,6 @@ class Api:
 
         if self.credentials and HAS_SD and shared and shared.cmd_opts and shared.cmd_opts.api_auth:
             # With authentication
-            security = HTTPBasic()
-
-            def auth(credentials: HTTPBasicCredentials = Depends(security)):
-                if credentials.username in self.credentials and compare_digest(
-                    credentials.password, self.credentials[credentials.username]
-                ):
-                    return True
-
-                raise HTTPException(
-                    status_code=401,
-                    detail="Incorrect username or password",
-                    headers={"WWW-Authenticate": "Basic"},
-                )
-
-            self.app.add_api_route(path, endpoint, dependencies=[Depends(auth)], **kwargs)
-        elif self.credentials and not HAS_SD:
-            # With authentication in standalone mode
             security = HTTPBasic()
 
             def auth(credentials: HTTPBasicCredentials = Depends(security)):
@@ -181,6 +171,69 @@ class Api:
                     res["tag"][k] = v
 
         return models.TaggerInterrogateResponse(caption=res)
+
+    def endpoint_interrogate_batch(self, req: models.TaggerInterrogateBatchRequest):
+        """ batch interrogation of multiple images with categorized results """
+        if not req.images:
+            raise HTTPException(400, 'No images provided')
+
+        if req.model not in utils.interrogators:
+            raise HTTPException(404, 'Model not found')
+
+        interrogator = utils.interrogators[req.model]
+        
+        # Load tags database for the model to get category information
+        tags_df = None
+        if hasattr(interrogator, 'tags') and interrogator.tags is not None:
+            tags_df = interrogator.tags
+        else:
+            # Load the tags file if not already loaded
+            if req.images:
+                image = decode_base64_to_image(req.images[0])
+                with self.queue_lock:
+                    interrogator.load()
+                    # We don't actually need to interrogate here, just load the model
+                    # to access the tags data
+                    _, _ = interrogator.interrogate(image)
+                tags_df = interrogator.tags
+
+        # Create a mapping from tag name to category if tags data is available
+        tag_categories = {}
+        if tags_df is not None and 'name' in tags_df.columns and 'category' in tags_df.columns:
+            for _, row in tags_df.iterrows():
+                tag_categories[row['name']] = row['category']
+
+        images = [decode_base64_to_image(img) for img in req.images]
+        results: List[Dict[str, Dict[str, float]]] = []
+
+        # Process images
+        with self.queue_lock:
+            for image in images:
+                ratings, tags = interrogator.interrogate(image)
+                
+                # Filter tags by threshold
+                filtered_tags = {k: v for k, v in tags.items() if v > req.threshold}
+
+                # Categorize tags
+                characters = {}
+                regular_tags = {}
+                
+                for tag, confidence in filtered_tags.items():
+                    category = tag_categories.get(tag, -1)  # Default to -1 if not found
+                    if category == 4:
+                        characters[tag] = confidence
+                    else:
+                        regular_tags[tag] = confidence
+
+                # Format result in categorized structure
+                result = {
+                    "ratings": ratings,
+                    "characters": characters,
+                    "tags": regular_tags
+                }
+                results.append(result)
+
+        return models.TaggerInterrogateBatchResponse(captions=results)
 
     def endpoint_interrogate_categorized(self, req: models.TaggerInterrogateRequest):
         """ one file interrogation with categorized tags """
@@ -249,85 +302,3 @@ class Api:
                 unloaded_models = unloaded_models + 1
 
         return f"Successfully unload {unloaded_models} model(s)"
-
-    async def add_to_queue(self, m, q, n='', i=None, t=0.0) -> Dict[
-        str, Dict[str, float]
-    ]:
-        """ add an interrogation to the queue """
-        if q not in self.queue:
-            self.queue[q] = asyncio.Queue()
-            self.res[q].clear()
-            self.tasks[q] = asyncio.create_task(self.run_batch(q))
-
-        if n == '':
-            await self.queue[q].put((m, i, t))
-        else:
-            await self.queue[q].put((m, i, t, n))
-
-    async def run_batch(self, q) -> None:
-        """ run a batch of interrogations """
-        # wait for the first image to be added to the queue
-        m, i, t, *n = await self.queue[q].get()
-        n = n[0] if n else ''
-
-        # collect all queued images
-        batch = [(m, i, t, n)]
-        while not self.queue[q].empty():
-            m, i, t, *n = await self.queue[q].get()
-            n = n[0] if n else ''
-            batch.append((m, i, t, n))
-
-        # run the interrogator against the batch
-        interrogator = utils.interrogators[batch[0][0]]
-        with self.queue_lock:
-            # batch process
-            if hasattr(interrogator, 'large_batch_interrogate'):
-                # large batch handling
-                images = []
-                names = []
-                for _, i, _, n in batch:
-                    images.append(decode_base64_to_image(i))
-                    names.append(n)
-                res = interrogator.large_batch_interrogate(images)
-                for i, r in enumerate(res.splitlines()):
-                    self.res[q][names[i]] = {"tag": {}, "rating": {}}
-                    # TODO: parse result properly
-            else:
-                # regular batch handling
-                for m, i, t, n in batch:
-                    image = decode_base64_to_image(i)
-                    res = {"tag": {}, "rating": {}}
-                    res["rating"], tags = interrogator.interrogate(image)
-                    for k, v in tags.items():
-                        if v > t:
-                            res["tag"][k] = v
-                    self.res[q][n] = res
-
-        # signal that the batch is complete
-        self.running_batches[q] = {}
-
-    async def queue_interrogation(self, m, q, n='', i=None, t=0.0) -> Dict[
-        str, Dict[str, float]
-    ]:
-        """ queue an interrogation, or add to batch """
-        if n == '':
-            task = asyncio.create_task(self.add_to_queue(m, q))
-        else:
-            if n == '<sha256>':
-                n = sha256(i).hexdigest()
-                if n in self.res[q]:
-                    return self.running_batches
-            elif n in self.res[q]:
-                # clobber name if it's already in the queue
-                j = 0
-                while f'{n}#{j}' in self.res[q]:
-                    j += 1
-                n = f'{n}#{j}'
-            self.res[q][n] = {}
-            # add image to queue
-            task = asyncio.create_task(self.add_to_queue(m, q, n, i, t))
-        return await task
-
-
-def on_app_started(_, app: FastAPI):
-    Api(app, queue_lock, '/tagger/v1')
