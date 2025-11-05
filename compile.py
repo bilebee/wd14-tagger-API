@@ -1,78 +1,99 @@
 #!/usr/bin/env python3
-"""
-Compile script for WD14 Tagger API using Nuitka
-Creates a standalone executable that behaves like run_server.bat
-"""
-
-import os
-import sys
+# -*- coding: utf-8 -*-
 import subprocess
-from pathlib import Path
+import sys
+import os
 
-def check_python_version():
-    """Check if Python version is compatible with Nuitka and MinGW64"""
-    major, minor = sys.version_info[:2]
-    if major > 3 or (major == 3 and minor >= 13):
-        print(f"Error: Python {major}.{minor} is not fully compatible with Nuitka and MinGW64")
-        print("Please use Python 3.12 or earlier to compile this project")
-        print("You can:")
-        print("1. Download Python 3.12 from https://www.python.org/downloads/release/python-312/")
-        print("2. Or use a specific Python version with: py -3.10 compile.py")
-        return False
-    return True
+def get_python_path():
+    # 检查是否存在python3.10
+    possible_paths = [
+        "python3.10",
+        "py -3.10",
+        sys.executable  # 当前使用的python路径
+    ]
+    
+    for path in possible_paths:
+        try:
+            result = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0 and "3.10" in result.stdout:
+                return path
+        except Exception:
+            continue
+    
+    # 如果没有找到python3.10，则使用当前python
+    return sys.executable
+
+def get_package_version_files():
+    """
+    获取需要包含在可执行文件中的包版本文件列表
+    返回格式: [(源文件路径, 目标相对路径), ...]
+    """
+    version_files = []
+    
+    # 需要包含version.txt文件的包列表
+    packages_with_versions = ['safehttpx', 'groovy']
+    
+    for package_name in packages_with_versions:
+        try:
+            # 动态导入包以获取其路径
+            package = __import__(package_name)
+            if hasattr(package, '__file__') and package.__file__:
+                # 构建version.txt的完整路径
+                package_dir = os.path.dirname(package.__file__)
+                version_file_src = os.path.join(package_dir, 'version.txt')
+                
+                # 检查文件是否存在
+                if os.path.exists(version_file_src):
+                    # 目标路径保持包名结构
+                    version_file_dst = f"{package_name}/version.txt"
+                    version_files.append((version_file_src, version_file_dst))
+                else:
+                    print(f"Warning: version.txt not found for package {package_name}")
+            else:
+                print(f"Warning: Could not determine path for package {package_name}")
+        except ImportError as e:
+            print(f"Warning: Could not import package {package_name}: {e}")
+        except Exception as e:
+            print(f"Warning: Error processing package {package_name}: {e}")
+    
+    return version_files
 
 def main():
-    print("Compiling WD14 Tagger API with Nuitka...")
+    python_cmd = get_python_path()
+    print(f"Using Python command: {python_cmd}")
+    print("Running Nuitka compilation...")
     
-    # Check Python version compatibility
-    if not check_python_version():
-        sys.exit(1)
+    # 获取当前脚本所在目录
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    output_dir = os.path.join(current_dir, "dist")
     
-    # Get project root directory
-    project_root = Path(__file__).parent.absolute()
-    print(f"Project root: {project_root}")
+    # 确保输出目录存在
+    os.makedirs(output_dir, exist_ok=True)
     
-    # Entry point script
-    entry_script = project_root / "wd14_tagger_exe.py"
-    
-    if not entry_script.exists():
-        print(f"Error: {entry_script} not found")
-        sys.exit(1)
-    
-    # Output directory
-    output_dir = project_root / "dist"
-    output_dir.mkdir(exist_ok=True)
-    
-    # Nuitka command with optimizations
+    # 构建基础命令
     cmd = [
-        sys.executable, "-m", "nuitka",
+        python_cmd,
+        "-m", "nuitka",
         "--standalone",
         "--onefile",
         "--mingw64",
         "--windows-console=force",
-        "--output-dir=" + str(output_dir),
+        f"--output-dir={output_dir}",
         "--remove-output",
         "--assume-yes-for-downloads",
-        # Anti-bloat plugin configurations to exclude test modules
         "--noinclude-unittest-mode=error",
         "--noinclude-pytest-mode=error",
         "--noinclude-setuptools-mode=error",
-        # Explicitly set Torch JIT parameter
         "--module-parameter=torch-disable-jit=yes",
-        # Disable LTO to prevent compilation errors
-        # "--lto=yes",
-        # Use multiple cores for faster compilation
+        "--lto=no",  # 禁用LTO避免之前的编译错误
         "--jobs=4",
-        # Include necessary packages
         "--include-package=tagger",
         "--include-package=fastapi",
         "--include-package=uvicorn",
         "--include-package=PIL",
         "--include-package=jsonschema",
         "--include-module=safehttpx",
-        # Include data files for safehttpx
-        "--include-data-file=C:\\path\\to\\Python\\Python310\\lib\\site-packages\\safehttpx\\version.txt=safehttpx/version.txt",
-        # Follow imports for key packages but exclude tests
+        "--include-module=groovy",
         "--nofollow-import-to=*.tests",
         "--nofollow-import-to=*.test",
         "--nofollow-import-to=pandas.tests",
@@ -83,21 +104,26 @@ def main():
         "--nofollow-import-to=numpy.ma.testutils",
         "--nofollow-import-to=numpy.conftest",
         "--nofollow-import-to=pandas.conftest",
-        str(entry_script)
+        os.path.join(current_dir, "wd14_tagger_exe.py")
     ]
     
-    print("Running Nuitka compilation...")
+    # 添加需要的数据文件
+    version_files = get_package_version_files()
+    for src, dst in version_files:
+        cmd.append(f"--include-data-file={src}={dst}")
+        print(f"Including data file: {src} -> {dst}")
+    
     print("Command:", " ".join(cmd))
     
     try:
-        result = subprocess.run(cmd, check=True, cwd=project_root)
-        print("Compilation completed successfully!")
-        print(f"Executable created at: {output_dir / 'wd14_tagger_exe.exe'}")
+        result = subprocess.run(cmd, check=True)
+        print("\nCompilation completed successfully!")
+        print(f"Executable has been created in {os.path.join(output_dir, 'wd14_tagger_exe.exe')}")
     except subprocess.CalledProcessError as e:
-        print(f"Compilation failed with error: {e}")
+        print(f"\nCompilation failed with error: {e}")
         sys.exit(1)
     except KeyboardInterrupt:
-        print("\nCompilation interrupted by user")
+        print("\nCompilation cancelled by user.")
         sys.exit(1)
 
 if __name__ == "__main__":
