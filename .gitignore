@@ -5,3 +5,4 @@ __pycache__/
 models/
 presets/
 dist/
+test/

@@ -4,18 +4,12 @@ import os
 from typing import List, Dict
 from pathlib import Path
 
-try:
-    from modules import shared, scripts  # pylint: disable=import-error
-    from modules.shared import models_path  # pylint: disable=import-error
-    HAS_SD = True
-except ImportError:
-    # Standalone mode settings
-    shared = type('Shared', (), {})()
-    models_path = os.path.join(os.getcwd(), "models")
-    shared.models_path = models_path
-    shared.cmd_opts = type('CmdOpts', (), {})()
-    scripts = None
-    HAS_SD = False
+# Standalone mode settings
+shared = type('Shared', (), {})()
+models_path = os.path.join(os.getcwd(), "models")
+shared.models_path = models_path
+shared.cmd_opts = type('CmdOpts', (), {})()
+HAS_SD = False
 
 default_ddp_path = Path(shared.models_path, 'deepdanbooru')
 default_onnx_path = Path(shared.models_path, 'TaggerOnnx')
@@ -24,7 +18,8 @@ from tagger.preset import Preset  # pylint: disable=import-error
 from tagger.interrogator import Interrogator, DeepDanbooruInterrogator, \
                                 WaifuDiffusionInterrogator  # pylint: disable=E0401 # noqa: E501
 
-preset = Preset(Path(scripts.basedir(), 'presets')) if HAS_SD and scripts else Preset(Path('presets'))
+# Simplified preset handling for standalone mode
+preset = Preset(Path('presets'))
 
 interrogators: Dict[str, Interrogator] = {
     'wd14-vit.v1': WaifuDiffusionInterrogator(
@@ -63,12 +58,8 @@ interrogators: Dict[str, Interrogator] = {
 def refresh_interrogators() -> List[str]:
     """Refreshes the interrogators list"""
     # load deepdanbooru project
-    ddp_path = shared.cmd_opts.deepdanbooru_projects_path if HAS_SD and shared and shared.cmd_opts else None
-    if ddp_path is None:
-        ddp_path = os.environ.get('DEEPDANBOORU_PROJECTS_PATH', default_ddp_path)
-    onnx_path = shared.cmd_opts.onnxtagger_path if HAS_SD and shared and shared.cmd_opts else None
-    if onnx_path is None:
-        onnx_path = os.environ.get('ONNXTAGGER_PATH', default_onnx_path)
+    ddp_path = os.environ.get('DEEPDANBOORU_PROJECTS_PATH', default_ddp_path)
+    onnx_path = os.environ.get('ONNXTAGGER_PATH', default_onnx_path)
     os.makedirs(ddp_path, exist_ok=True)
     os.makedirs(onnx_path, exist_ok=True)
 

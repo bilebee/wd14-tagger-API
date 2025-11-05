@@ -4,8 +4,7 @@ from pathlib import Path
 import io
 import json
 import inspect
-from re import match as re_match
-from platform import system, uname
+from platform import uname
 from typing import Tuple, List, Dict, Callable
 from pandas import read_csv
 from PIL import Image, UnidentifiedImageError
@@ -19,23 +18,18 @@ except ImportError:
     HAS_HUGGINGFACE = False
     hf_hub_download = None
 
-try:
-    from modules.paths import extensions_dir
-    from modules import shared
-    HAS_SD = True
-except ImportError:
-    # Standalone mode settings
-    extensions_dir = os.path.dirname(os.path.abspath(__file__))
-    shared = type('Shared', (), {})()
-    shared.models_path = os.path.join(os.getcwd(), "models")
-    shared.cmd_opts = type('CmdOpts', (), {})()
-    # Set default values for cmd_opts attributes
-    shared.cmd_opts.use_cpu = []
-    shared.cmd_opts.additional_device_ids = None
-    # Create opts for standalone mode
-    shared.opts = type('Opts', (), {})()
-    shared.opts.tagger_hf_cache_dir = os.path.join(os.getcwd(), "cache")
-    HAS_SD = False
+# Standalone mode settings
+extensions_dir = os.path.dirname(os.path.abspath(__file__))
+shared = type('Shared', (), {})()
+shared.models_path = os.path.join(os.getcwd(), "models")
+shared.cmd_opts = type('CmdOpts', (), {})()
+# Set default values for cmd_opts attributes
+shared.cmd_opts.use_cpu = []
+shared.cmd_opts.additional_device_ids = None
+# Create opts for standalone mode
+shared.opts = type('Opts', (), {})()
+shared.opts.tagger_hf_cache_dir = os.path.join(os.getcwd(), "cache")
+HAS_SD = False
 
 from tagger import settings  # pylint: disable=import-error
 from tagger.uiset import QData, IOData  # pylint: disable=import-error
@@ -44,17 +38,15 @@ from . import dbimutils  # pylint: disable=import-error # noqa
 Its = settings.InterrogatorSettings
 
 # select a device to process
-try:
-    use_cpu = ('all' in shared.cmd_opts.use_cpu) or (
-        'interrogate' in shared.cmd_opts.use_cpu) if HAS_SD and shared and shared.cmd_opts else False
-except AttributeError:
-    use_cpu = False
+use_cpu = ('all' in shared.cmd_opts.use_cpu) or (
+    'interrogate' in shared.cmd_opts.use_cpu) if shared and shared.cmd_opts else False
 
 # https://onnxruntime.ai/docs/execution-providers/
 # https://github.com/toriato/stable-diffusion-webui-wd14-tagger/commit/e4ec460122cf674bbf984df30cdb10b4370c1224#r92654958
 onnxrt_providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
 
-if HAS_SD and shared and shared.cmd_opts and shared.cmd_opts.additional_device_ids is not None:
+if shared and shared.cmd_opts and shared.cmd_opts.additional_device_ids is not None:
+    from re import match as re_match
     m = re_match(r'([cg])pu:\d+$', shared.cmd_opts.additional_device_ids)
     if m is None:
         raise ValueError('--device-id is not cpu:<nr> or gpu:<nr>')
@@ -96,17 +88,16 @@ def get_onnxrt():
                 except (subprocess.TimeoutExpired, FileNotFoundError):
                     # nvidia-smi not found or timeout, skip CUDA check
                     pass
-            onnxruntime.preload_dlls()
             return ort
         except Exception:
-            pass
-            
-        return ort
+            # If we can't check CUDA availability, just return ort
+            return ort
     except ImportError:
-        raise ImportError(
-            "Please install onnxruntime to use ONNX models: "
-            "pip install onnxruntime"
-        )
+        print("ONNX Runtime is not installed. Please install it with:")
+        print("pip install onnxruntime")
+        print("For GPU support, use:")
+        print("pip install onnxruntime-gpu")
+        return None
 
 
 class Interrogator:
@@ -249,7 +240,6 @@ class DeepDanbooruInterrogator(Interrogator):
             )
 
             print(f'Loaded {self.name} model from {str(self.project_path)}')
-            
 
             self.tags = ddp.load_tags_from_project(
                 project_path=self.project_path

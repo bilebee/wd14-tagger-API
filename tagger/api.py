@@ -9,16 +9,10 @@ import string
 from random import choices
 import os
 
-try:
-    from modules import shared  # pylint: disable=import-error
-    from modules.api.api import decode_base64_to_image  # pylint: disable=E0401
-    from modules.call_queue import queue_lock  # pylint: disable=import-error
-    HAS_SD = True
-except ImportError:
-    # Standalone mode without Stable Diffusion
-    shared = None
-    queue_lock = Lock()
-    HAS_SD = False
+# Standalone mode without Stable Diffusion
+shared = None
+queue_lock = Lock()
+HAS_SD = False
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -36,13 +30,24 @@ except ImportError:
 
 def decode_base64_to_image(encoding):
     """Standalone version of decode_base64_to_image"""
-    if encoding.startswith("data:image/"):
-        encoding = encoding.split(";")[1].split(",")[1]
+    if encoding is None:
+        raise HTTPException(status_code=400, detail="Image data is None")
+        
+    if not encoding:
+        raise HTTPException(status_code=400, detail="Empty image data")
+        
+    # Handle data URL format: data:image/jpeg;base64,/9j/...
+    if isinstance(encoding, str) and encoding.startswith("data:image/"):
+        try:
+            encoding = encoding.split(";")[1].split(",")[1]
+        except IndexError:
+            raise HTTPException(status_code=400, detail="Invalid data URL format")
+    
     try:
-        image = Image.open(BytesIO(base64.b64decode(encoding)))
+        image = Image.open(BytesIO(base64.b64decode(encoding, validate=True)))
         return image
     except Exception as e:
-        raise HTTPException(status_code=400, detail="Invalid encoded image") from e
+        raise HTTPException(status_code=400, detail=f"Invalid encoded image: {str(e)}") from e
 
 
 class Api:
@@ -51,17 +56,12 @@ class Api:
         self, app: FastAPI, qlock: Lock, prefix: Optional[str] = None
     ) -> None:
         self.credentials = {}
-        if HAS_SD and shared and shared.cmd_opts and shared.cmd_opts.api_auth:
-            for auth in shared.cmd_opts.api_auth.split(","):
+        # In standalone mode, check for environment variables
+        api_auth = os.environ.get("API_AUTH", "")
+        if api_auth:
+            for auth in api_auth.split(","):
                 user, password = auth.split(":")
                 self.credentials[user] = password
-        elif not HAS_SD:
-            # In standalone mode, check for environment variables
-            api_auth = os.environ.get("API_AUTH", "")
-            if api_auth:
-                for auth in api_auth.split(","):
-                    user, password = auth.split(":")
-                    self.credentials[user] = password
 
         self.app = app
         self.queue: Dict[str, asyncio.Queue] = {}
@@ -208,7 +208,12 @@ class Api:
 
         # Process images
         with self.queue_lock:
-            for image in images:
+            for img in req.images:
+                try:
+                    image = decode_base64_to_image(img)
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=f"Invalid encoded image: {str(e)}") from e
+                    
                 ratings, tags = interrogator.interrogate(image)
                 
                 # Filter tags by threshold
