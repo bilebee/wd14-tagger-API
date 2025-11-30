@@ -10,6 +10,8 @@ from pandas import read_csv
 from PIL import Image, UnidentifiedImageError
 from numpy import asarray, float32, expand_dims, exp
 from tqdm import tqdm
+import hashlib
+import sqlite3
 
 try:
     from huggingface_hub import hf_hub_download
@@ -163,6 +165,96 @@ class Interrogator:
         self.name = name
         self.model = None
 
+    def _get_cache_db_path(self) -> str:
+        """Get the path to the cache database for this model"""
+        # Create cache directory if it doesn't exist
+        cache_dir = Path("cache")
+        cache_dir.mkdir(exist_ok=True)
+        
+        # Generate a unique name for the model database based on model properties
+        model_identifier = self.name
+        if hasattr(self, 'repo_id'):
+            model_identifier = f"{self.repo_id}_{self.name}"
+        elif hasattr(self, 'local_model'):
+            model_identifier = self.local_model or self.name
+            
+        # Create a hash of the model identifier for the filename
+        model_hash = hashlib.md5(model_identifier.encode()).hexdigest()[:8]
+        db_path = cache_dir / f"{model_hash}.sqlite"
+        
+        return str(db_path)
+
+    def _init_cache_db(self, db_path: str) -> None:
+        """Initialize the cache database with the required table"""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Create table for storing image hashes and model outputs
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS image_cache (
+                image_hash TEXT PRIMARY KEY,
+                model_output BLOB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+
+    def _get_image_hash(self, image: Image) -> str:
+        """Calculate SHA256 hash of the image content"""
+        # Convert image to bytes
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='PNG')
+        img_bytes = img_byte_arr.getvalue()
+        
+        # Calculate SHA256 hash
+        return hashlib.sha256(img_bytes).hexdigest()
+
+    def _get_cached_result(self, image_hash: str, db_path: str) -> Tuple[Dict[str, float], Dict[str, float]] | None:
+        """Retrieve cached result for the given image hash"""
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT model_output FROM image_cache WHERE image_hash = ?', (image_hash,))
+            result = cursor.fetchone()
+            
+            if result:
+                # Deserialize the model output
+                import pickle
+                model_output = pickle.loads(result[0])
+                conn.close()
+                return model_output
+            
+            conn.close()
+            return None
+        except Exception as e:
+            print(f"Error retrieving cached result: {e}")
+            return None
+
+    def _cache_result(self, image_hash: str, ratings: Dict[str, float], tags: Dict[str, float], db_path: str) -> None:
+        """Cache the model output for the given image hash"""
+        try:
+            # Serialize the model output
+            import pickle
+            model_output = (ratings, tags)
+            serialized_output = pickle.dumps(model_output)
+            
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            # Insert or replace the cached result
+            cursor.execute('''
+                INSERT OR REPLACE INTO image_cache (image_hash, model_output)
+                VALUES (?, ?)
+            ''', (image_hash, serialized_output))
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Error caching result: {e}")
+
     def load(self) -> None:
         raise NotImplementedError()
 
@@ -287,6 +379,9 @@ class DeepDanbooruInterrogator(Interrogator):
             else:
                 ratings[tag[7:]] = confidences[i]
 
+        # Cache the result
+        self._cache_result(image_hash, ratings, tags, db_path)
+
         return ratings, tags
 
 
@@ -383,6 +478,17 @@ class WaifuDiffusionInterrogator(Interrogator):
         if self.model_type != "onnx":
             raise ValueError(f"Unsupported model type: {self.model_type}")
 
+        # Cache mechanism
+        db_path = self._get_cache_db_path()
+        self._init_cache_db(db_path)
+        image_hash = self._get_image_hash(image)
+        
+        # Try to get cached result first
+        cached_result = self._get_cached_result(image_hash, db_path)
+        if cached_result is not None:
+            print(f"Cache hit for image {image_hash[:8]}...")
+            return cached_result
+
         # code for converting the image and running the model is taken from the
         # link below. thanks, SmilingWolf!
         # https://huggingface.co/spaces/SmilingWolf/wd-v1-4-tags/blob/main/app.py
@@ -407,16 +513,23 @@ class WaifuDiffusionInterrogator(Interrogator):
         label_name = self.model.get_outputs()[0].name
         confidences = self.model.run([label_name], {input_name: image})[0]
 
-        tags = self.tags[:][['name']]
-        tags['confidences'] = confidences[0]
+        # Create a temporary DataFrame with confidences
+        # Avoid recreating the entire DataFrame each time
+        tags_with_conf = self.tags.copy()
+        tags_with_conf['confidences'] = confidences[0]
 
         # first 4 items are for rating (general, sensitive, questionable,
         # explicit)
-        ratings = dict(tags[:4].values)
+        ratings_df = tags_with_conf[:4]
+        ratings = dict(zip(ratings_df['name'], ratings_df['confidences']))
 
         # rest are regular tags
-        tags = dict(tags[4:].values)
+        tags_df = tags_with_conf[4:]
+        tags = dict(zip(tags_df['name'], tags_df['confidences']))
 
+        # Cache the result
+        self._cache_result(image_hash, ratings, tags, db_path)
+        
         return ratings, tags
 
     def dry_run(self, images) -> Tuple[str, Callable[[str], None]]:

@@ -2,26 +2,10 @@
 fastapi>=0.68.0
 uvicorn>=0.15.0
 Pillow>=8.3.0
-numpy>=1.21.0
-pandas>=1.3.0
-tqdm>=4.62.0
-jsonschema>=3.2.0
-gradio>=3.35.0
-
-# Optional dependencies for different model types
-# For ONNX models
-onnxruntime>=1.8.0
-
-# For DeepDanbooru models
-# git+https://github.com/KichangKim/DeepDanbooru.git
-
-# For HuggingFace models
+pydantic>=1.8.0
+onnxruntime>=1.10.0
+tensorflow>=2.9.0
 huggingface-hub>=0.0.12
-
-# For image processing
-opencv-contrib-python>=4.5.0
-opencv-python>=4.5.0
-opencv-python-headless>=4.5.0
-
-# For packaging
+jsonschema>=4.0.0
+PyYAML>=6.0
 packaging>=21.0

@@ -12,6 +12,9 @@ except ImportError:
     HAS_GRADIO = False
     Context = type('Context', (), {'block': None})
 
+# 当在纯API模式下运行时，我们不需要gradio
+# 所以即使没有gradio也能正常工作
+
 try:
     from modules.images import sanitize_filename_part  # pylint: disable=E0401
     HAS_SD = True

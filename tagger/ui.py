@@ -1,6 +1,5 @@
 """ This module contains the ui for the tagger tab. """
 from typing import Dict, Tuple, List, Optional
-import gradio as gr
 import re
 from PIL import Image
 from packaging import version
@@ -12,13 +11,32 @@ except ImportError:
 
 from html import escape as html_esc
 
-from modules import ui  # pylint: disable=import-error
-from modules import generation_parameters_copypaste as parameters_copypaste  # pylint: disable=import-error # noqa
+# 模拟gradio组件类，用于API模式
+class MockGradioComponent:
+    def __init__(self, *args, **kwargs):
+        pass
+    
+    def input(self, fn, inputs, outputs):
+        pass
+        
+    def change(self, fn, inputs, outputs):
+        pass
+        
+    def submit(self, fn, inputs, outputs):
+        pass
+        
+    def click(self, fn, inputs, outputs):
+        pass
+        
+    def select(self, fn, inputs, outputs):
+        pass
+        
+    def release(self, fn, inputs, outputs):
+        pass
 
-try:
-    from modules.call_queue import wrap_gradio_gpu_call
-except ImportError:
-    from webui import wrap_gradio_gpu_call  # pylint: disable=import-error
+# 创建gr的模拟对象
+gr = MockGradioComponent()
+
 from tagger import utils  # pylint: disable=import-error
 from tagger.interrogator import Interrogator as It  # pylint: disable=E0401
 from tagger.uiset import IOData, QData  # pylint: disable=import-error
@@ -82,73 +100,6 @@ def on_interrogate(
     return search_filter(filt)
 
 
-def on_gallery() -> List:
-    return QData.get_image_dups()
-
-
-def on_interrogate_image(*args) -> COMMON_OUTPUT:
-    # hack brcause image interrogaion occurs twice
-    It.odd_increment = It.odd_increment + 1
-    if It.odd_increment & 1 == 1:
-        return (None,) * 6 + ('',)
-    return on_interrogate_image_submit(*args)
-
-
-def on_interrogate_image_submit(
-    image: Image, name: str, filt: str, *args
-) -> COMMON_OUTPUT:
-    for i, val in enumerate(args):
-        part = TAG_INPUTS[i]
-        if val != It.input[part]:
-            getattr(QData, "update_" + part)(val)
-            It.input[part] = val
-
-    if image is None:
-        return (None,) * 6 + ('No image selected',)
-    interrogator: It = next((i for i in utils.interrogators.values() if
-                             i.name == name), None)
-    if interrogator is None:
-        return (None,) * 6 + (f"'{name}': invalid interrogator",)
-
-    interrogator.interrogate_image(image)
-    return search_filter(filt)
-
-
-def move_selection_to_input(
-    filt: str, field: str
-) -> Tuple[Optional[str], Optional[str], str]:
-    """ moves the selected to the input field """
-    if It.output is None:
-        return (None, None, '')
-    tags = It.output[1]
-    got = It.input[field]
-    existing = set(got.split(', '))
-    if filt:
-        re_part = re.compile('(' + re.sub(', ?', '|', filt) + ')')
-        tags = {k: v for k, v in tags.items() if re_part.search(k) and
-                k not in existing}
-        print("Tags remaining: ", tags)
-
-    if len(tags) == 0:
-        return ('', None, '')
-
-    if got != '':
-        got = got + ', '
-
-    (data, info) = It.set(field)(got + ', '.join(tags.keys()))
-    return ('', data, info)
-
-
-def move_selection_to_keep(
-    tag_search_filter: str
-) -> Tuple[Optional[str], Optional[str], str]:
-    return move_selection_to_input(tag_search_filter, "keep")
-
-
-def move_selection_to_exclude(
-    tag_search_filter: str
-) -> Tuple[Optional[str], Optional[str], str]:
-    return move_selection_to_input(tag_search_filter, "exclude")
 
 
 def search_filter(filt: str) -> COMMON_OUTPUT:

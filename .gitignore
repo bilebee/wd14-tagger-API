@@ -6,3 +6,4 @@ models/
 presets/
 dist/
 test/
+cache/

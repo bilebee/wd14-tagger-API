@@ -38,7 +38,17 @@ class MockShared:
 shared = MockShared()
 shared.OptionInfo = MockOptionInfo
 
-import gradio as gr
+# 替代gradio的模拟实现
+class MockGradioComponents:
+    def __init__(self):
+        pass
+    
+    class Slider:
+        def __init__(self, **kwargs):
+            pass
+
+# 创建一个模拟的gr对象来替换gradio
+gr = MockGradioComponents()
 
 # kaomoji from WD 1.4 tagger csv. thanks, Meow-San#5400!
 DEFAULT_KAMOJIS = '0_0, (o)_(o), +_+, +_-, ._., <o>_<o>, <|>_<|>, =_=, >_<, 3_3, 6_9, >_o, @_@, ^_^, o_o, u_u, x_x, |_|, ||_||'  # pylint: disable=line-too-long # noqa: E501
@@ -49,8 +59,8 @@ HF_CACHE = os.environ.get('HF_HOME', os.environ.get('HUGGINGFACE_HUB_CACHE',
            str(os.path.join(shared.models_path, 'interrogators'))))
 
 def slider_wrapper(value, elem_id, **kwargs):
-    # required or else gradio will throw errors
-    return gr.Slider(**kwargs)
+    # 简单返回值和kwargs，忽略elem_id参数
+    return value, kwargs
 
 
 class InterrogatorSettings:
