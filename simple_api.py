@@ -113,18 +113,6 @@ def get_tag_categories():
             
     return tag_categories
 
-def get_category_names(model_path):
-    """Get category names from categories.json file in the model folder"""
-    categories_file = os.path.join(model_path, 'categories.json')
-    if os.path.exists(categories_file):
-        try:
-            with open(categories_file, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Error loading categories file: {e}")
-            return None
-    return None
-
 def apply_tag_filters(tags: Dict[str, float]) -> Dict[str, float]:
     """Apply tag filtering based on configuration settings"""
     # Default values
@@ -517,11 +505,6 @@ async def interrogate(
     # Get tag categories
     tag_categories = get_tag_categories()
     
-    # Get category names
-    category_names = None
-    if hasattr(interrogator_instance, 'model_dir'):
-        category_names = get_category_names(interrogator_instance.model_dir)
-
     # Apply tag filters
     filtered_tags = apply_tag_filters(tags)
     
@@ -535,15 +518,10 @@ async def interrogate(
     for tag, confidence in threshold_filtered_tags.items():
         category = tag_categories.get(tag, -1)  # Default to -1 if not found
         
-        # Convert category to name if available
-        category_name = category
-        if category_names and str(category) in category_names:
-            category_name = category_names[str(category)]
-        
-        # Categorize based on category name or number
-        if category_name == "character" or category_name == 4:
+        # Categorize based on category number directly
+        if category == 4:
             characters[tag] = confidence
-        elif category_name == "general" or category_name == 0:
+        elif category == 0:
             general_tags[tag] = confidence
         # Ratings are handled separately and already in the 'ratings' dict
 
