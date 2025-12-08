@@ -1,18 +1,22 @@
 """Simple API for WD14 Tagger"""
+"""Simple API for WD14 Tagger"""
 import os
 import sys
 import argparse
 import json
-from typing import Dict, List, AsyncIterator
+from typing import Dict, List, AsyncIterator, Optional
 from threading import Lock
 from io import BytesIO
 import asyncio
 from contextlib import asynccontextmanager
 from PIL import Image
 import uvicorn
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+import base64
+import re
+import yaml
 
 # Add the project root to the path so we can import tagger modules
 sys.path.insert(0, os.path.dirname(__file__))
@@ -20,6 +24,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 from tagger import utils
 
 # Models
+class InterrogateRequest(BaseModel):
+    image: str  # Base64 encoded image
+    threshold: float = 0.0
+
 class InterrogateResponse(BaseModel):
     ratings: Dict[str, float]
     characters: Dict[str, float]
@@ -481,22 +489,53 @@ async def root():
     return HTMLResponse(content=html_content, status_code=200)
 
 @app.post("/interrogate", response_model=InterrogateResponse)
-async def interrogate(
-    image: UploadFile = File(...),
-    threshold: float = Form(0.0)
-):
+async def interrogate(request: Request, threshold: float = Form(0.0)):
     """Interrogate an image and return categorized tags"""
     global interrogator_instance
     
     if interrogator_instance is None:
         raise HTTPException(status_code=500, detail="Model not loaded")
     
-    # Read image file
+    # Read image file or decode base64 image
     try:
-        image_content = await image.read()
-        pil_image = Image.open(BytesIO(image_content))
+        # Try to parse JSON body first
+        image_field = None
+        content_type = request.headers.get('content-type', '')
+        
+        if 'application/json' in content_type:
+            # Handle JSON request body
+            try:
+                json_body = await request.json()
+                image_field = json_body.get("image")
+                # Override threshold if provided in JSON body
+                if "threshold" in json_body:
+                    threshold = float(json_body["threshold"])
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid JSON body")
+        else:
+            # Parse form data for base64 string or file in form field
+            form = await request.form()
+            image_field = form.get("image")
+        
+        if not image_field:
+            raise HTTPException(status_code=400, detail="No image provided")
+        
+        # Check if image_field is a file upload or base64 string
+        if hasattr(image_field, 'filename') and image_field.filename:
+            # Process uploaded file
+            image_content = await image_field.read()
+            pil_image = Image.open(BytesIO(image_content))
+        elif isinstance(image_field, (str, bytes)):
+            # Process base64 encoded image
+            image_str = image_field.decode('utf-8') if isinstance(image_field, bytes) else image_field
+            if not is_base64_image(image_str):
+                raise ValueError("Invalid base64 image")
+            pil_image = load_base64_image(image_str)
+        else:
+            raise HTTPException(status_code=400, detail="Invalid image format")
+            
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
     # Perform interrogation
     with queue_lock:
@@ -508,7 +547,7 @@ async def interrogate(
     # Apply tag filters
     filtered_tags = apply_tag_filters(tags)
     
-    # Apply threshold filter but always include ratings
+    # Apply threshold filter
     threshold_filtered_tags = {k: v for k, v in filtered_tags.items() if v >= threshold}
 
     # Categorize tags
@@ -530,6 +569,47 @@ async def interrogate(
         characters=characters,
         tags=general_tags
     )
+
+def is_base64_image(image_str: str) -> bool:
+    """Check if the string is a valid base64 encoded image"""
+    try:
+        # Make sure we're working with a string
+        if not isinstance(image_str, str):
+            return False
+            
+        # Check if it starts with data:image/ prefix
+        if image_str.startswith('data:image/'):
+            # Extract the base64 part
+            base64_part = image_str.split(',', 1)[1] if ',' in image_str else image_str
+        else:
+            base64_part = image_str
+            
+        # Try to decode it
+        base64.b64decode(base64_part, validate=True)
+        return True
+    except Exception:
+        return False
+
+def load_base64_image(image_str: str) -> Image.Image:
+    """Load a PIL Image from a base64 encoded string"""
+    try:
+        # Make sure we're working with a string
+        if not isinstance(image_str, str):
+            raise ValueError("Input must be a string")
+            
+        # Handle data:image/ prefix if present
+        if image_str.startswith('data:image/'):
+            # Extract the base64 part
+            image_str = image_str.split(',', 1)[1] if ',' in image_str else image_str
+            
+        # Decode base64
+        image_data = base64.b64decode(image_str)
+        
+        # Load PIL Image
+        pil_image = Image.open(BytesIO(image_data))
+        return pil_image
+    except Exception as e:
+        raise ValueError(f"Invalid base64 image: {str(e)}")
 
 def main():
     # Try to load configuration
