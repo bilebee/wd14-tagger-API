@@ -4,7 +4,7 @@ Stable Diffusion WebUI 的 WD14 Tagger 扩展插件的独立版本，无需 WebU
 
 # 弃用！这坨屎山无法维护，未来将会迁移到新的项目上进行开发
 
-
+## 请迁移至[wd14-API-onnx](https://github.com/bilebee/wd14-API-onnx)
 
 
 本项目为 Koakuma 项目提供后端支持，Koakuma 是一个图像检索网站项目。但此项目也可独立用于任何需要图像标签识别的场景。
